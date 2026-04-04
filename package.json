@@ -3,7 +3,7 @@
   "version": "0.1.1",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
+    "dev": "next dev",
     "build": "next build",
     "start": "next start",
     "lint": "next lint"
@@ -18,7 +18,7 @@
     "chart": "^0.1.2",
     "class-variance-authority": "^0.7.1",
     "lucide-react": "^0.474.0",
-    "next": "15.1.6",
+    "next": "^15.5.14",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
     "recharts": "^2.15.1",
