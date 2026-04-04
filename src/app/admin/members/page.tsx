@@ -116,6 +116,17 @@ export default function MemberManagement() {
   }
 
   const deleteSelectedMembers = async () => {
+    const { error: attendanceError } = await supabase
+      .from("attendance")
+      .delete()
+      .in("member_id", selectedMembers)
+
+    if (attendanceError) {
+      console.error("Error deleting member attendance:", attendanceError)
+      alert("Failed to delete member attendance data. Please try again.")
+      return
+    }
+
     const { error } = await supabase
       .from("members")
       .delete()
@@ -314,6 +325,9 @@ export default function MemberManagement() {
               <div className="mb-6">
                 <p className="text-gray-700 mb-2">
                   Are you sure you want to delete <strong>{selectedMembers.length}</strong> selected member{selectedMembers.length > 1 ? 's' : ''}?
+                </p>
+                <p className="mb-2 text-sm font-medium text-red-700">
+                  When you delete a member, that member&apos;s attendance data will be deleted as well.
                 </p>
                 <p className="text-sm text-red-600 font-medium">
                   This action cannot be undone.

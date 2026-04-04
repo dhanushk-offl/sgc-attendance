@@ -1,13 +1,14 @@
 "use client"
 
-import { useState, useEffect } from "react"
-import { supabase } from "@/lib/supabase"
-import { Card } from "@/components/ui/card"
-import { Share2, ArrowLeft, Check, X, RefreshCw } from "lucide-react"
+import { useEffect, useState } from "react"
 import type { User } from "@supabase/supabase-js"
-import { useRouter } from "next/navigation"
-import Link from "next/link"
+import { ArrowLeft, Check, RefreshCw, Share2, X } from "lucide-react"
 import Image from "next/image"
+import Link from "next/link"
+import { useRouter } from "next/navigation"
+
+import { Card } from "@/components/ui/card"
+import { supabase } from "@/lib/supabase"
 
 type Member = {
   id: number
@@ -17,26 +18,26 @@ type Member = {
   academicYear: string
 }
 
-type GroupedMembers = {
-  [key: string]: Member[]
-}
+type GroupedMembers = Record<string, Member[]>
+type AttendanceMap = Record<number, boolean | undefined>
 
 export default function DailyAttendance() {
   const [members, setMembers] = useState<Member[]>([])
   const [groupedMembers, setGroupedMembers] = useState<GroupedMembers>({})
   const [date, setDate] = useState<string>(new Date().toISOString().split("T")[0])
-  const [attendance, setAttendance] = useState<{ [key: number]: boolean | undefined }>({})
-  const [originalAttendance, setOriginalAttendance] = useState<{ [key: number]: boolean | undefined }>({})
+  const [attendance, setAttendance] = useState<AttendanceMap>({})
+  const [originalAttendance, setOriginalAttendance] = useState<AttendanceMap>({})
   const [changedAttendance, setChangedAttendance] = useState<Set<number>>(new Set())
-  const [message, setMessage] = useState<string>("")
+  const [message, setMessage] = useState("")
   const [user, setUser] = useState<User | null>(null)
   const [loading, setLoading] = useState(true)
   const [fetchingAttendance, setFetchingAttendance] = useState(false)
+  const [submittingAttendance, setSubmittingAttendance] = useState(false)
   const [showToast, setShowToast] = useState(false)
   const [toastMessage, setToastMessage] = useState("")
   const router = useRouter()
 
-  const yearOrder: { [key: string]: number } = {
+  const yearOrder: Record<string, number> = {
     IV: 1,
     III: 2,
     II: 3,
@@ -44,8 +45,47 @@ export default function DailyAttendance() {
   }
 
   useEffect(() => {
-    checkSession()
+    void checkSession()
   }, [])
+
+  useEffect(() => {
+    void fetchMembers()
+  }, [])
+
+  useEffect(() => {
+    if (members.length > 0) {
+      void fetchAttendance()
+    }
+  }, [date, members])
+
+  useEffect(() => {
+    const grouped = members.reduce((acc: GroupedMembers, member) => {
+      const year = member.academicYear || "Other"
+      if (!acc[year]) {
+        acc[year] = []
+      }
+      acc[year].push(member)
+      return acc
+    }, {})
+
+    Object.keys(grouped).forEach((year) => {
+      grouped[year].sort((a, b) => a.name.localeCompare(b.name))
+    })
+
+    setGroupedMembers(grouped)
+  }, [members])
+
+  useEffect(() => {
+    if (!showToast) {
+      return
+    }
+
+    const timer = window.setTimeout(() => {
+      setShowToast(false)
+    }, 3000)
+
+    return () => window.clearTimeout(timer)
+  }, [showToast])
 
   const checkSession = async () => {
     try {
@@ -67,138 +107,131 @@ export default function DailyAttendance() {
     }
   }
 
-  useEffect(() => {
-    fetchMembers()
-  }, [])
-
-  useEffect(() => {
-    if (members.length > 0) {
-      fetchAttendance()
-    }
-  }, [date, members])
-
-  useEffect(() => {
-    organizeMembers()
-  }, [members])
-
-  useEffect(() => {
-    if (showToast) {
-      const timer = setTimeout(() => {
-        setShowToast(false)
-      }, 3000)
-
-      return () => clearTimeout(timer)
-    }
-  }, [showToast])
-
   const fetchMembers = async () => {
-    const { data, error } = await supabase.from("members").select("*").order("academicYear", { ascending: false })
+    const { data, error } = await supabase
+      .from("members")
+      .select("id, name, department, role, academicYear")
+      .order("academicYear", { ascending: false })
 
-    if (error) console.error("Error fetching members:", error)
-    else setMembers(data || [])
-  }
+    if (error) {
+      console.error("Error fetching members:", error)
+      return
+    }
 
-  const organizeMembers = () => {
-    const grouped = members.reduce((acc: GroupedMembers, member) => {
-      const year = member.academicYear || "Other"
-      if (!acc[year]) {
-        acc[year] = []
-      }
-      acc[year].push(member)
-      return acc
-    }, {})
-
-    Object.keys(grouped).forEach((year) => {
-      grouped[year].sort((a, b) => a.name.localeCompare(b.name))
-    })
-
-    setGroupedMembers(grouped)
+    setMembers(data || [])
   }
 
   const fetchAttendance = async () => {
     setFetchingAttendance(true)
+
     const { data, error } = await supabase.from("attendance").select("member_id, is_present").eq("date", date)
 
     if (error) {
       console.error("Error fetching attendance:", error)
       setFetchingAttendance(false)
-    } else {
-      const fetchedAttendance = data.reduce(
-        (acc: { [key: number]: boolean }, record: { member_id: number; is_present: boolean }) => {
-          acc[record.member_id] = record.is_present
-          return acc
-        },
-        {},
-      )
-      setAttendance(fetchedAttendance)
-      setOriginalAttendance(fetchedAttendance)
-      setChangedAttendance(new Set())
-      setMessage("")
-      setFetchingAttendance(false)
+      return
     }
+
+    const fetchedAttendance = (data || []).reduce((acc: AttendanceMap, record: { member_id: number; is_present: boolean }) => {
+      acc[record.member_id] = record.is_present
+      return acc
+    }, {})
+
+    setAttendance(fetchedAttendance)
+    setOriginalAttendance(fetchedAttendance)
+    setChangedAttendance(new Set())
+    setMessage("")
+    setFetchingAttendance(false)
+  }
+
+  const updateAttendanceState = (nextAttendance: AttendanceMap) => {
+    const nextChanged = new Set<number>()
+
+    members.forEach((member) => {
+      if (originalAttendance[member.id] !== nextAttendance[member.id]) {
+        nextChanged.add(member.id)
+      }
+    })
+
+    setAttendance(nextAttendance)
+    setChangedAttendance(nextChanged)
   }
 
   const handleAttendanceChange = (memberId: number, isPresent: boolean) => {
-    setAttendance((prev) => {
-      const newAttendance = { ...prev, [memberId]: isPresent }
-      
-      // Track if this changed from original
-      const originalValue = originalAttendance[memberId]
-      setChangedAttendance((prevChanged) => {
-        const newChanged = new Set(prevChanged)
-        if (originalValue !== isPresent) {
-          newChanged.add(memberId)
-        } else {
-          newChanged.delete(memberId)
-        }
-        return newChanged
-      })
-      
-      return newAttendance
+    updateAttendanceState({
+      ...attendance,
+      [memberId]: isPresent,
     })
   }
 
-  const submitAttendance = async () => {
-    // Only submit changed attendance records
-    const changedRecords = Array.from(changedAttendance)
-      .filter(memberId => attendance[memberId] !== undefined)
-      .map((memberId) => ({
-        member_id: memberId,
-        date,
-        is_present: attendance[memberId] as boolean,
-      }))
+  const clearMemberSelection = (memberId: number) => {
+    const nextAttendance = { ...attendance }
+    delete nextAttendance[memberId]
+    updateAttendanceState(nextAttendance)
+  }
 
-    if (changedRecords.length === 0) {
-      setToastMessage("⚠️ No changes to submit")
+  const setAllMembers = (isPresent: boolean) => {
+    const nextAttendance = members.reduce((acc: AttendanceMap, member) => {
+      acc[member.id] = isPresent
+      return acc
+    }, {})
+
+    updateAttendanceState(nextAttendance)
+  }
+
+  const resetSelections = () => {
+    updateAttendanceState({ ...originalAttendance })
+  }
+
+  const generateMessage = () => {
+    const presentMembers = members.filter((member) => attendance[member.id] === true)
+    const absentMembers = members.filter((member) => attendance[member.id] !== true)
+
+    const formattedMessage = `*Attendance Report - ${date}*\n\n*Present (${presentMembers.length}):*\n${presentMembers.map((member) => `- ${member.name} (${member.academicYear} Year)`).join("\n") || "None"}\n\n*Absent (${absentMembers.length}):*\n${absentMembers.map((member) => `- ${member.name} (${member.academicYear} Year)`).join("\n") || "None"}\n\n*Stay consistent and keep learning!*`
+    setMessage(formattedMessage)
+  }
+
+  const submitAttendance = async () => {
+    if (changedAttendance.size === 0) {
+      setToastMessage("No changes to submit")
       setShowToast(true)
       return
     }
 
-    const { error } = await supabase.from("attendance").upsert(changedRecords, { onConflict: "member_id, date" })
+    const presentMemberIds = members.filter((member) => attendance[member.id] === true).map((member) => member.id)
+    const hasExplicitAbsences = members.some((member) => attendance[member.id] === false)
+    const fallbackAbsentMemberId =
+      members.find((member) => attendance[member.id] === false)?.id ?? members[0]?.id ?? null
+
+    setSubmittingAttendance(true)
+    const { error } = await supabase.rpc("record_attendance_for_date", {
+      p_date: date,
+      p_present_member_ids: presentMemberIds,
+      p_mark_working_day: presentMemberIds.length > 0 || hasExplicitAbsences,
+      p_absent_member_id: fallbackAbsentMemberId,
+    })
+    setSubmittingAttendance(false)
 
     if (error) {
       console.error("Error submitting attendance:", error)
-      setToastMessage("❌ Error updating attendance")
+      setToastMessage("Error updating attendance")
       setShowToast(true)
-    } else {
-      // Update original attendance to current state
-      setOriginalAttendance({ ...attendance })
-      setChangedAttendance(new Set())
-      setToastMessage(`✅ Updated attendance for ${changedRecords.length} member(s) on ${date}`)
-      setShowToast(true)
-      generateMessage()
+      return
     }
-  }
 
-  const generateMessage = () => {
-    // Present: Only members explicitly marked as true
-    const presentMembers = members.filter((m) => attendance[m.id] === true)
-    
-    // Absent: Members marked as false OR not marked at all (undefined)
-    const absentMembers = members.filter((m) => attendance[m.id] === false || attendance[m.id] === undefined)
+    const nextOriginalAttendance = members.reduce((acc: AttendanceMap, member) => {
+      const value = attendance[member.id]
+      if (value !== undefined) {
+        acc[member.id] = value
+      }
+      return acc
+    }, {})
 
-    const formattedMessage = `*Attendance Report - ${date}* \n\n *Present (${presentMembers.length}):* \n${presentMembers.map((m) => `- ${m.name} (${m.academicYear} Year)`).join("\n") || "None"}\n\n *Absent (${absentMembers.length}):* \n${absentMembers.map((m) => `- ${m.name} (${m.academicYear} Year)`).join("\n") || "None"}\n\n *Stay consistent and keep learning!* `
-    setMessage(formattedMessage)
+    setOriginalAttendance(nextOriginalAttendance)
+    setChangedAttendance(new Set())
+    setToastMessage(`Attendance saved for ${date}`)
+    setShowToast(true)
+    generateMessage()
   }
 
   const handleDateChange = (newDate: string) => {
@@ -206,14 +239,19 @@ export default function DailyAttendance() {
     setMessage("")
   }
 
-  const renderYearCard = (year: string, members: Member[]) => (
+  const presentCount = members.filter((member) => attendance[member.id] === true).length
+  const explicitAbsentCount = members.filter((member) => attendance[member.id] === false).length
+  const inferredAbsentCount = members.length - presentCount
+  const workingDayWillBeRecorded = presentCount > 0 || explicitAbsentCount > 0
+
+  const renderYearCard = (year: string, yearMembers: Member[]) => (
     <Card
       key={year}
-      className="mb-6 border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)] transition-shadow"
+      className="mb-6 border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-shadow hover:shadow-[6px_6px_0px_0px_rgba(0,0,0,1)]"
     >
-      <div className="bg-yellow-100 border-b-2 border-black p-4 rounded-t-md">
+      <div className="rounded-t-md border-b-2 border-black bg-yellow-100 p-4">
         <h3 className="text-xl font-bold">{year} Year Students</h3>
-        <p className="text-sm text-gray-600 mt-1">{members.length} members</p>
+        <p className="mt-1 text-sm text-gray-600">{yearMembers.length} members</p>
       </div>
 
       <div className="p-4">
@@ -221,45 +259,59 @@ export default function DailyAttendance() {
           <table className="w-full">
             <thead>
               <tr>
-                <th className="px-4 py-3 text-left font-bold border-b-2 border-black">Name</th>
-                <th className="px-4 py-3 text-center font-bold border-b-2 border-black w-[140px]">Attendance</th>
+                <th className="border-b-2 border-black px-4 py-3 text-left font-bold">Name</th>
+                <th className="w-[220px] border-b-2 border-black px-4 py-3 text-center font-bold">Attendance</th>
               </tr>
             </thead>
             <tbody>
-              {members.map((member, index) => {
+              {yearMembers.map((member, index) => {
                 const hasChanged = changedAttendance.has(member.id)
+
                 return (
                   <tr
                     key={member.id}
-                    className={`hover:bg-gray-50 ${index !== members.length - 1 ? "border-b border-gray-200" : ""} ${hasChanged ? "bg-blue-50" : ""}`}
+                    className={`hover:bg-gray-50 ${index !== yearMembers.length - 1 ? "border-b border-gray-200" : ""} ${hasChanged ? "bg-blue-50" : ""}`}
                   >
                     <td className="px-4 py-3">
-                      <p className="font-medium flex items-center gap-2">
+                      <p className="flex items-center gap-2 font-medium">
                         {member.name}
-                        {hasChanged && <span className="text-xs text-blue-600 font-bold">●</span>}
+                        {hasChanged && <span className="text-xs font-bold text-blue-600">Changed</span>}
                       </p>
                     </td>
                     <td className="px-4 py-2">
                       <div className="flex justify-center gap-2">
                         <button
                           onClick={() => handleAttendanceChange(member.id, true)}
-                          className={`w-10 h-10 flex items-center justify-center rounded-md border-2 border-black transition-all ${
+                          className={`flex h-10 w-10 items-center justify-center rounded-md border-2 border-black transition-all ${
                             attendance[member.id] === true
-                              ? "bg-green-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px]"
+                              ? "bg-green-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]"
                               : "bg-gray-100 hover:bg-green-100"
                           }`}
+                          aria-label={`Mark ${member.name} present`}
                         >
-                          <Check className="w-5 h-5" />
+                          <Check className="h-5 w-5" />
                         </button>
                         <button
                           onClick={() => handleAttendanceChange(member.id, false)}
-                          className={`w-10 h-10 flex items-center justify-center rounded-md border-2 border-black transition-all ${
+                          className={`flex h-10 w-10 items-center justify-center rounded-md border-2 border-black transition-all ${
                             attendance[member.id] === false
-                              ? "bg-red-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px]"
+                              ? "bg-red-400 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[1px] hover:translate-y-[1px] hover:shadow-[1px_1px_0px_0px_rgba(0,0,0,1)]"
                               : "bg-gray-100 hover:bg-red-100"
                           }`}
+                          aria-label={`Mark ${member.name} absent`}
                         >
-                          <X className="w-5 h-5" />
+                          <X className="h-5 w-5" />
+                        </button>
+                        <button
+                          onClick={() => clearMemberSelection(member.id)}
+                          className={`h-10 rounded-md border-2 border-black px-3 text-xs font-bold transition-all ${
+                            attendance[member.id] === undefined
+                              ? "bg-blue-100 shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+                              : "bg-gray-100 hover:bg-blue-50"
+                          }`}
+                          aria-label={`Clear ${member.name} selection`}
+                        >
+                          Clear
                         </button>
                       </div>
                     </td>
@@ -273,65 +325,119 @@ export default function DailyAttendance() {
     </Card>
   )
 
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-[#f0f0f0] p-4 md:p-8">
+        <div className="flex min-h-[50vh] items-center justify-center">
+          <div className="text-xl font-medium">Loading...</div>
+        </div>
+      </div>
+    )
+  }
+
+  if (!user) {
+    return null
+  }
+
   return (
     <div className="min-h-screen bg-[#f0f0f0] p-4 md:p-8">
       {showToast && (
-        <div className="fixed top-4 left-1/2 transform -translate-x-1/2 z-50">
-          <div className="bg-green-500 text-white px-4 py-2 rounded-md shadow-md flex items-center justify-between">
+        <div className="fixed left-1/2 top-4 z-50 -translate-x-1/2 transform">
+          <div className="flex items-center justify-between rounded-md bg-green-500 px-4 py-2 text-white shadow-md">
             <span>{toastMessage}</span>
             <button onClick={() => setShowToast(false)} className="ml-2 text-white hover:text-gray-200">
-              <X className="w-4 h-4" />
+              <X className="h-4 w-4" />
             </button>
           </div>
         </div>
       )}
-      <Link
-        href="/admin/dashboard"
-        className="inline-flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-6 group"
-      >
-        <ArrowLeft className="w-4 h-4 transition-transform group-hover:-translate-x-1" />
+
+      <Link href="/admin/dashboard" className="group mb-6 inline-flex items-center gap-2 text-gray-600 hover:text-gray-900">
+        <ArrowLeft className="h-4 w-4 transition-transform group-hover:-translate-x-1" />
         <span className="text-sm font-medium">Back to Dashboard</span>
       </Link>
 
-      <div className="flex items-center justify-center mb-6">
+      <div className="mb-6 flex items-center justify-center">
         <Image src="/logo.png" alt="SGC Logo" width={100} height={100} />
       </div>
 
-      <div className="max-w-4xl mx-auto">
-        <Card className="mb-6 bg-white border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] md:shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
+      <div className="mx-auto max-w-4xl">
+        <Card className="mb-6 border-2 border-black bg-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] md:shadow-[8px_8px_0px_0px_rgba(0,0,0,1)]">
           <div className="p-4 md:p-6">
-            <h1 className="text-3xl md:text-4xl font-black tracking-tight mb-6">Daily Attendance</h1>
+            <h1 className="mb-6 text-3xl font-black tracking-tight md:text-4xl">Daily Attendance</h1>
 
             <div className="flex gap-2">
               <input
                 type="date"
                 value={date}
-                onChange={(e) => handleDateChange(e.target.value)}
-                className="flex-1 px-4 py-3 text-lg border-2 border-black rounded-md shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] focus:outline-none focus:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] transition-shadow"
+                onChange={(event) => handleDateChange(event.target.value)}
+                className="flex-1 rounded-md border-2 border-black px-4 py-3 text-lg shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-shadow focus:outline-none focus:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
               />
               <button
-                onClick={fetchAttendance}
+                onClick={() => void fetchAttendance()}
                 disabled={fetchingAttendance}
-                className="px-4 py-3 bg-purple-500 text-white font-bold rounded-md border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[2px] hover:translate-y-[2px] transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                className="flex items-center gap-2 rounded-md border-2 border-black bg-orange-400 px-4 py-3 font-bold text-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <RefreshCw className={`w-5 h-5 ${fetchingAttendance ? "animate-spin" : ""}`} />
+                <RefreshCw className={`h-5 w-5 ${fetchingAttendance ? "animate-spin" : ""}`} />
                 {fetchingAttendance ? "Loading..." : "Fetch"}
               </button>
             </div>
 
+            <div className="mt-4 flex flex-wrap gap-2">
+              <button
+                onClick={() => setAllMembers(true)}
+                className="rounded-md border-2 border-black bg-green-200 px-4 py-2 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+              >
+                Mark All Present
+              </button>
+              <button
+                onClick={() => setAllMembers(false)}
+                className="rounded-md border-2 border-black bg-red-200 px-4 py-2 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+              >
+                Mark All Absent
+              </button>
+              <button
+                onClick={resetSelections}
+                className="rounded-md border-2 border-black bg-white px-4 py-2 font-bold shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)]"
+              >
+                Reset to Saved
+              </button>
+            </div>
+
             {changedAttendance.size > 0 && (
-              <div className="mt-4 p-3 bg-blue-100 border-2 border-blue-500 rounded-md">
-                <p className="text-sm font-medium text-blue-900">
-                  📝 {changedAttendance.size} unsaved change(s)
-                </p>
+              <div className="mt-4 rounded-md border-2 border-blue-500 bg-blue-100 p-3">
+                <p className="text-sm font-medium text-blue-900">{changedAttendance.size} unsaved change(s)</p>
               </div>
             )}
+
+            <div className="mt-4 grid gap-3 md:grid-cols-3">
+              <div className="rounded-md border-2 border-black bg-green-100 p-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-700">Present</p>
+                <p className="text-2xl font-black">{presentCount}</p>
+              </div>
+              <div className="rounded-md border-2 border-black bg-red-100 p-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-700">Absent</p>
+                <p className="text-2xl font-black">{inferredAbsentCount}</p>
+                <p className="text-xs text-gray-600">{explicitAbsentCount} explicitly marked</p>
+              </div>
+              <div className="rounded-md border-2 border-black bg-yellow-100 p-3">
+                <p className="text-xs font-bold uppercase tracking-wide text-gray-700">Working Day</p>
+                <p className="text-sm font-bold">
+                  {workingDayWillBeRecorded ? "Yes, this date will count" : "No, date stays unsaved"}
+                </p>
+              </div>
+            </div>
+
+            <p className="mt-4 text-sm text-gray-700">
+              Only present members are stored for normal days. Anyone not marked present on a saved working day is
+              treated as absent automatically.
+            </p>
           </div>
         </Card>
 
         {fetchingAttendance ? (
           <div className="flex items-center justify-center py-12">
-            <RefreshCw className="w-8 h-8 animate-spin text-gray-600" />
+            <RefreshCw className="h-8 w-8 animate-spin text-gray-600" />
           </div>
         ) : (
           <div className="space-y-6">
@@ -344,26 +450,28 @@ export default function DailyAttendance() {
         <div className="mt-6 space-y-6">
           <button
             onClick={submitAttendance}
-            disabled={changedAttendance.size === 0}
-            className="w-full px-6 py-4 bg-blue-500 text-white font-bold rounded-md border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[2px] hover:translate-y-[2px] transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+            disabled={changedAttendance.size === 0 || submittingAttendance}
+            className="w-full rounded-md border-2 border-black bg-blue-500 px-6 py-4 font-bold text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] disabled:cursor-not-allowed disabled:opacity-50"
           >
-            {changedAttendance.size > 0 
-              ? `Submit ${changedAttendance.size} Change(s)` 
-              : "No Changes to Submit"}
+            {submittingAttendance
+              ? "Saving..."
+              : changedAttendance.size > 0
+                ? `Save ${changedAttendance.size} Change(s)`
+                : "No Changes to Submit"}
           </button>
 
           {message && (
             <Card className="border-2 border-black bg-green-100 shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]">
               <div className="p-4 md:p-6">
-                <h2 className="text-lg md:text-xl font-bold mb-4">Attendance Summary</h2>
-                <pre className="whitespace-pre-wrap font-medium text-sm md:text-base">{message}</pre>
+                <h2 className="mb-4 text-lg font-bold md:text-xl">Attendance Summary</h2>
+                <pre className="whitespace-pre-wrap text-sm font-medium md:text-base">{message}</pre>
                 <a
                   href={`https://wa.me/?text=${encodeURIComponent(message)}`}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="mt-4 w-full px-4 md:px-6 py-3 bg-green-500 text-white font-bold rounded-md border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] hover:translate-x-[2px] hover:translate-y-[2px] transition-all flex items-center justify-center gap-2"
+                  className="mt-4 flex w-full items-center justify-center gap-2 rounded-md border-2 border-black bg-green-500 px-4 py-3 font-bold text-white shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] transition-all hover:translate-x-[2px] hover:translate-y-[2px] hover:shadow-[2px_2px_0px_0px_rgba(0,0,0,1)] md:px-6"
                 >
-                  <Share2 className="w-5 h-5" />
+                  <Share2 className="h-5 w-5" />
                   Share on WhatsApp
                 </a>
               </div>
