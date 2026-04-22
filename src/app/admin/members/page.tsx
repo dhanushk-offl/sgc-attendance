@@ -28,6 +28,7 @@ export default function MemberManagement() {
   const [user, setUser] = useState<User | null>(null)
   const [selectedMembers, setSelectedMembers] = useState<number[]>([])
   const [searchQuery, setSearchQuery] = useState("")
+  const [isDeleting, setIsDeleting] = useState(false)
   const router = useRouter()
   
   const emptyMember: Omit<Member, 'id'> = {
@@ -116,15 +117,29 @@ export default function MemberManagement() {
   }
 
   const deleteSelectedMembers = async () => {
-    const { error: attendanceError } = await supabase
-      .from("attendance")
-      .delete()
-      .in("member_id", selectedMembers)
+    if (selectedMembers.length === 0 || isDeleting) return
 
-    if (attendanceError) {
-      console.error("Error deleting member attendance:", attendanceError)
-      alert("Failed to delete member attendance data. Please try again.")
-      return
+    setIsDeleting(true)
+
+    const memberDependencyTables = [
+      { table: "attendance", label: "attendance data" },
+      { table: "session_interests", label: "session interest data" },
+      { table: "session_feedback", label: "session feedback data" },
+      { table: "push_subscriptions", label: "push subscription data" },
+    ] as const
+
+    for (const dependency of memberDependencyTables) {
+      const { error } = await supabase
+        .from(dependency.table)
+        .delete()
+        .in("member_id", selectedMembers)
+
+      if (error) {
+        console.error(`Error deleting member ${dependency.label}:`, error)
+        alert(`Failed to delete member ${dependency.label}. Please try again.`)
+        setIsDeleting(false)
+        return
+      }
     }
 
     const { error } = await supabase
@@ -135,11 +150,14 @@ export default function MemberManagement() {
     if (error) {
       console.error("Error deleting members:", error)
       alert("Failed to delete members. Please try again.")
-    } else {
-      setSelectedMembers([])
-      fetchMembers()
+      setIsDeleting(false)
+      return
     }
+
+    setSelectedMembers([])
+    await fetchMembers()
     setShowDeleteDialog(false)
+    setIsDeleting(false)
   }
 
   const toggleMemberSelection = (id: number) => {
@@ -329,6 +347,9 @@ export default function MemberManagement() {
                 <p className="mb-2 text-sm font-medium text-red-700">
                   When you delete a member, that member&apos;s attendance data will be deleted as well.
                 </p>
+                <p className="mb-2 text-sm font-medium text-red-700">
+                  Related session interests, session feedback, and push subscriptions will also be deleted.
+                </p>
                 <p className="text-sm text-red-600 font-medium">
                   This action cannot be undone.
                 </p>
@@ -343,9 +364,10 @@ export default function MemberManagement() {
                 </button>
                 <button
                   onClick={deleteSelectedMembers}
-                  className="px-6 py-2 bg-red-500 text-white font-bold rounded-md border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all"
+                  disabled={isDeleting}
+                  className="px-6 py-2 bg-red-500 text-white font-bold rounded-md border-2 border-black shadow-[4px_4px_0px_0px_rgba(0,0,0,1)] hover:translate-x-1 hover:translate-y-1 hover:shadow-none transition-all disabled:cursor-not-allowed disabled:opacity-60 disabled:hover:translate-x-0 disabled:hover:translate-y-0 disabled:hover:shadow-[4px_4px_0px_0px_rgba(0,0,0,1)]"
                 >
-                  Delete
+                  {isDeleting ? "Deleting..." : "Delete"}
                 </button>
               </div>
             </div>
